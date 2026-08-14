@@ -8,17 +8,15 @@ If something in here doesn't match what you see on screen because a vendor UI ha
 
 ## 0. What you're building, in plain language
 
-Three things talk to each other:
+Two things talk to each other:
 
-1. **Frontend** — a small static website hosted on Cloudflare Pages (or Netlify). You open it in your browser. It looks like a chat app.
-2. **Cloudflare Worker** — a tiny script that lives at a URL like `https://forge-worker.<you>.workers.dev`. It doesn't store anything. Its only job is to (a) tell GitHub Actions "start a job", and (b) forward live progress updates from the running job back to your browser.
-3. **GitHub** — one repo, `forge-sessions`, which is the *only* place Forge stores anything. Every chat becomes a folder under `sessions/`. A workflow file (`forge-task.yml`) is what actually runs the AI agent, on GitHub's own free Actions runners.
+1. **Merged Cloudflare Worker** — a single Worker at a URL like `https://forge.<you>.workers.dev`. It serves the static chat frontend directly and also handles the relay API that starts GitHub Actions jobs, forwards live progress events, and proxies session file operations. It does not store durable state.
+2. **GitHub** — one repo, `forge-sessions`, which is the *only* place Forge stores anything. Every chat becomes a folder under `sessions/`. A workflow file (`forge-task.yml`) is what actually runs the AI agent, on GitHub's own free Actions runners.
 
 If any one of those three restarts, nothing is lost, because GitHub is the only durable store.
 
 Free-tier friendly:
 - Cloudflare Workers: 100k requests/day free.
-- Cloudflare Pages: unlimited requests, effectively free for personal use.
 - GitHub Actions: 2,000 free minutes/month on public repos, more on private paid plans.
 - The AI itself: served through **Puter.js**, which does not charge you per model call in the current model.
 
@@ -126,66 +124,37 @@ In the `forge-sessions` repo on GitHub, go to **Settings → Secrets and variabl
 - **Permissions** — add these rows:
   - Account · Cloudflare Workers Scripts · Edit
   - Account · Account Settings · Read
-  - Account · Cloudflare Pages · Edit
 - **Account Resources**: Include → your account.
-- **Zone Resources**: leave as "All zones" or "Include specific zone" if you're picky (Workers/Pages don't require a zone for this flow).
+- **Zone Resources**: leave as "All zones" or choose specific zones if applicable.
 - Continue → Create Token. Copy the value.
 - Paste it into the `CLOUDFLARE_API_TOKEN` secret in step 3.
 
-### 4d. Create the Pages project (one time)
-
-The `deploy-frontend.yml` workflow needs a Pages project to deploy into. Create it once:
-
-- Dashboard → **Workers & Pages → Create → Pages → Upload assets** (or "Direct Upload") → project name **`forge-ui`** → skip the file upload (we deploy via CI). It's fine if the first deploy is empty; the workflow will overwrite it.
-
-Alternatively, on your laptop:
-
-```bash
-npx wrangler login
-npx wrangler pages project create forge-ui --production-branch=main
-```
-
 ---
 
-## 5. Deploy the Worker (auto)
+## 5. Deploy the Worker and frontend (auto)
 
-You do NOT deploy the Worker manually. The `deploy-worker.yml` GitHub Actions workflow does it. It runs whenever anything under `worker/` changes on `main`.
+You do NOT deploy the Worker or frontend manually. The `deploy-worker.yml` GitHub Actions workflow deploys both together whenever anything under `worker/` or `frontend/` changes on `main`.
 
-Push your initial commit (from step 1) and it will run automatically. Watch it in the **Actions** tab of the repo.
+Push your initial commit from step 1 and watch the workflow in the **Actions** tab of the repo. Wrangler reads the `[assets]` configuration in `worker/wrangler.toml`, bundles the plain static files from `frontend/`, and publishes them from the same Worker that handles the relay API.
 
-When the run finishes green, your Worker is live at:
-
-```
-https://forge-worker.<your-cloudflare-subdomain>.workers.dev
-```
-
-Your Workers subdomain is shown on the Cloudflare **Workers & Pages** overview page. If you've never used Workers before, Cloudflare prompts you to pick one on your first deploy.
-
-**Important**: This workflow also seeds the Worker's runtime secrets (`FORGE_DISPATCH_PAT`, `FORGE_CALLBACK_SECRET`, `FORGE_SESSIONS_REPO`) via `wrangler secret put`. That means the values you added in step 3 are automatically pushed to Cloudflare. Nothing to do in the Cloudflare dashboard.
-
-We deliberately don't use Cloudflare's native "connect this Worker to a git repo" feature — it has been unreliable for you in the past. This workflow-based deploy is boring and predictable.
-
----
-
-## 6. Deploy the frontend (auto)
-
-Same pattern. The `deploy-frontend.yml` workflow deploys `frontend/` to the Cloudflare Pages project `forge-ui` whenever `frontend/` changes on `main`.
-
-After the workflow runs green, your frontend is at:
+When the run finishes green, the merged service is live at:
 
 ```
-https://forge-ui.pages.dev
+https://forge.<your-cloudflare-subdomain>.workers.dev
 ```
 
-or, if Cloudflare assigns a preview subdomain, at the URL shown in the Actions logs / Cloudflare Pages dashboard.
+Your Workers subdomain is shown on the Cloudflare **Workers** overview page. If you've never used Workers before, Cloudflare prompts you to pick one on your first deploy.
 
+The workflow also seeds the Worker's runtime secrets (`FORGE_DISPATCH_PAT`, `FORGE_CALLBACK_SECRET`, `FORGE_SESSIONS_REPO`) via `wrangler secret put`. Nothing else is required in the Cloudflare dashboard.
+
+We deliberately don't use Cloudflare's native "connect this Worker to a git repo" feature — this workflow-based deploy is predictable and deploys the frontend and relay as one unit.
 ---
 
 ## 7. First run
 
-1. Open your frontend URL (`https://forge-ui.pages.dev`) in a browser.
+1. Open the merged Worker URL (`https://forge.<your-subdomain>.workers.dev`) in a browser.
 2. The Settings modal pops up automatically the first time. Fill in:
-   - **Worker URL**: `https://forge-worker.<your-subdomain>.workers.dev` (no trailing slash)
+   - **Worker URL**: `https://forge.<your-subdomain>.workers.dev` (no trailing slash)
    - **Sessions repo**: `<your-username>/forge-sessions`
    - **Personal GitHub PAT (session storage)**: PAT B
    - **Target-repo PAT** and **Default target repo**: fill in only if you want Forge to push to some *other* repo (PAT C + `owner/repo`). Otherwise leave blank.
