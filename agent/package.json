@@ -1,0 +1,13 @@
+{
+  "name": "forge-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Forge agent loop. Runs inside GitHub Actions on a repository_dispatch trigger.",
+  "scripts": {
+    "start": "node run.js"
+  },
+  "dependencies": {
+    "playwright": "^1.48.0"
+  }
+}
