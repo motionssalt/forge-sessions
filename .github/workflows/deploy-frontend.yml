@@ -1,0 +1,41 @@
+name: deploy-frontend
+
+# Deploys the static frontend to Cloudflare Pages using wrangler.
+#
+# We use the same pattern as deploy-worker.yml: a plain Actions runner with
+# wrangler CLI, not Cloudflare Pages' native git integration.
+#
+# Required repo secrets:
+#   CLOUDFLARE_API_TOKEN  — must additionally have "Cloudflare Pages: Edit" scope
+#   CLOUDFLARE_ACCOUNT_ID — same as for the Worker
+#
+# On first run, create the Pages project manually in the Cloudflare dashboard
+# with the name below (or via `wrangler pages project create forge-ui`).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/deploy-frontend.yml'
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install wrangler
+        run: npm install --no-audit --no-fund --prefix _tools wrangler@^3.90.0
+
+      - name: Deploy to Cloudflare Pages
+        env:
+          CLOUDFLARE_API_TOKEN:  ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          ./_tools/node_modules/.bin/wrangler pages deploy frontend --project-name=forge-ui --branch=main
