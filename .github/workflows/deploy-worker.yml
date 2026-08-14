@@ -1,24 +1,14 @@
-name: deploy-worker
+name: Deploy Forge Worker
 
-# Auto-deploy the Cloudflare Worker whenever worker/ changes on main.
-#
-# This is deliberately NOT wired through Cloudflare's native git integration —
-# Victor has had reliability problems with that. Instead we use wrangler CLI
-# from a plain Actions runner, which is boring and predictable.
-#
-# Required repo secrets (see SETUP.md):
-#   CLOUDFLARE_API_TOKEN  — Cloudflare API token with "Edit Workers" scope
-#   CLOUDFLARE_ACCOUNT_ID — the numeric-looking Account ID from the Cloudflare dashboard
-#
-# The Worker's OWN runtime secrets (FORGE_DISPATCH_PAT, FORGE_CALLBACK_SECRET,
-# FORGE_SESSIONS_REPO) are set via `wrangler secret put` — see the "Seed Worker
-# secrets" step below.
+# The merged Worker serves both the relay API and the static frontend.
+# It deploys whenever either side changes on main.
 
 on:
   push:
     branches: [main]
     paths:
       - 'worker/**'
+      - 'frontend/**'
       - '.github/workflows/deploy-worker.yml'
   workflow_dispatch: {}
 
@@ -45,14 +35,13 @@ jobs:
           FORGE_CALLBACK_SECRET: ${{ secrets.FORGE_CALLBACK_SECRET }}
           FORGE_SESSIONS_REPO:   ${{ secrets.FORGE_SESSIONS_REPO }}
         run: |
-          # `wrangler secret put` reads the value from stdin. Piping via echo
-          # is safe here because these are already GitHub-Actions-masked
-          # secrets — the runner scrubs them from any log output.
+          # `wrangler secret put` reads the value from stdin. The values are
+          # already GitHub-Actions-masked secrets.
           if [ -n "$FORGE_DISPATCH_PAT" ];    then echo -n "$FORGE_DISPATCH_PAT"    | npx wrangler secret put FORGE_DISPATCH_PAT;    fi
           if [ -n "$FORGE_CALLBACK_SECRET" ]; then echo -n "$FORGE_CALLBACK_SECRET" | npx wrangler secret put FORGE_CALLBACK_SECRET; fi
           if [ -n "$FORGE_SESSIONS_REPO" ];   then echo -n "$FORGE_SESSIONS_REPO"   | npx wrangler secret put FORGE_SESSIONS_REPO;   fi
 
-      - name: Deploy Worker
+      - name: Deploy Worker and frontend
         working-directory: worker
         env:
           CLOUDFLARE_API_TOKEN:  ${{ secrets.CLOUDFLARE_API_TOKEN }}
