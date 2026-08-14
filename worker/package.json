@@ -1,0 +1,14 @@
+{
+  "name": "forge-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Forge Cloudflare Worker - thin relay between the frontend and GitHub Actions.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^3.90.0"
+  }
+}
