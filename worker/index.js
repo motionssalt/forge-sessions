@@ -390,7 +390,9 @@ export default {
         return handleStream(request, env, streamMatch[1]);
       }
 
-      return bad(404, "not found");
+      // Every non-API request is served by the static frontend bundled with this Worker.
+      // Keep API routes above so they are handled by the relay logic exactly as before.
+      return env.ASSETS.fetch(request);
     } catch (err) {
       return bad(500, `worker error: ${err && err.message ? err.message : String(err)}`);
     }
