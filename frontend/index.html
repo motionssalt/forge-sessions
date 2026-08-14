@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Forge — MOTIONSALT</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <div class="brand">
+        <div class="brand-mark">◆</div>
+        <div class="brand-text">
+          <div class="brand-title">FORGE</div>
+          <div class="brand-sub">MOTIONSALT</div>
+        </div>
+      </div>
+
+      <button id="new-session-btn" class="btn primary">+ New session</button>
+
+      <div class="sessions-header">
+        <span>Sessions</span>
+        <button id="refresh-sessions" class="btn ghost small" title="Refresh">↻</button>
+      </div>
+      <ul id="session-list" class="session-list"></ul>
+
+      <div class="sidebar-footer">
+        <button id="settings-btn" class="btn ghost">⚙ Settings</button>
+      </div>
+    </aside>
+
+    <main id="main">
+      <header id="topbar">
+        <div class="topbar-left">
+          <div id="session-title">No session</div>
+          <div id="session-id" class="mono muted small"></div>
+        </div>
+        <div class="topbar-right">
+          <label class="model-picker">
+            <span class="muted small">Model</span>
+            <select id="model-select">
+              <option value="claude-sonnet-5">Claude Sonnet 5</option>
+              <option value="claude-opus-4">Claude Opus 4</option>
+              <option value="gpt-5">GPT-5</option>
+              <option value="gpt-5-mini">GPT-5 mini</option>
+              <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+              <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+            </select>
+          </label>
+          <div id="status-indicator" class="status idle">idle</div>
+        </div>
+      </header>
+
+      <section id="stream" class="stream"></section>
+
+      <section id="outbox-panel" class="outbox hidden">
+        <div class="outbox-title">Outbox</div>
+        <ul id="outbox-list"></ul>
+      </section>
+
+      <footer id="composer">
+        <div id="upload-drop" class="upload-drop">
+          <input type="file" id="file-input" multiple hidden />
+          <span class="muted small">Drop files or <a href="#" id="file-pick">browse</a> to attach</span>
+          <ul id="pending-files" class="pending-files"></ul>
+        </div>
+        <div class="composer-row">
+          <textarea id="prompt" rows="3" placeholder="Tell Forge what to do..."></textarea>
+          <button id="send-btn" class="btn primary">Send ↵</button>
+        </div>
+      </footer>
+    </main>
+  </div>
+
+  <!-- Settings modal -->
+  <div id="settings-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-title">Settings</div>
+
+      <label class="field">
+        <span>Worker URL</span>
+        <input id="cfg-worker-url" type="text" placeholder="https://forge-worker.<your-subdomain>.workers.dev" />
+        <small class="muted">Your deployed Cloudflare Worker origin. No trailing slash.</small>
+      </label>
+
+      <label class="field">
+        <span>Sessions repo</span>
+        <input id="cfg-sessions-repo" type="text" placeholder="victor/forge-sessions" />
+        <small class="muted">GitHub repo <code>owner/name</code> that holds every session folder.</small>
+      </label>
+
+      <label class="field">
+        <span>Personal GitHub PAT (session storage)</span>
+        <input id="cfg-user-pat" type="password" placeholder="github_pat_..." autocomplete="off" />
+        <small class="muted">Fine-grained PAT with <b>Contents: read/write</b> + <b>Metadata: read</b> on the sessions repo. Stored in this browser's localStorage only.</small>
+      </label>
+
+      <label class="field">
+        <span>Target-repo PAT (optional)</span>
+        <input id="cfg-target-pat" type="password" placeholder="github_pat_... (leave blank if not pushing to another repo)" autocomplete="off" />
+        <small class="muted">Separate PAT used when Forge pushes to a <em>different</em> repo of yours (e.g. an app you're editing).</small>
+      </label>
+
+      <label class="field">
+        <span>Default target repo (optional)</span>
+        <input id="cfg-target-repo" type="text" placeholder="victor/my-project" />
+      </label>
+
+      <div class="modal-actions">
+        <button id="settings-save" class="btn primary">Save</button>
+        <button id="settings-cancel" class="btn ghost">Close</button>
+      </div>
+
+      <p class="muted small warn">
+        Security note: your PATs live in <code>localStorage</code> in this browser and are sent to
+        the Worker as <code>Authorization: Bearer …</code>. That is fine for a personal
+        single-user beta. Do not deploy this frontend on a shared machine or a public URL other
+        people log into.
+      </p>
+    </div>
+  </div>
+
+  <script src="./app.js" type="module"></script>
+</body>
+</html>
