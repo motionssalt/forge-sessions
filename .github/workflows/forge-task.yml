@@ -1,0 +1,100 @@
+name: forge-task
+
+# Triggered by the Cloudflare Worker firing a repository_dispatch event of
+# type "forge-task". See worker/index.js -> handleTask.
+#
+# The client_payload carries everything the agent needs to do the job. It
+# includes the user's PAT (for reads/writes to THIS repo) and an optional
+# target_repo + target_repo_pat (for pushing to some other repo of the user's).
+#
+# We deliberately checkout using the user_pat so that git commit/push made by
+# the agent goes back into this same repo under the user's identity, not the
+# runner's default GITHUB_TOKEN (which has scope limits we don't need to hit).
+
+on:
+  repository_dispatch:
+    types: [forge-task]
+
+# One session at a time per session_id — a repeat dispatch for the same
+# session should cancel the in-flight one.
+concurrency:
+  group: forge-${{ github.event.client_payload.session_id }}
+  cancel-in-progress: true
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout sessions repo
+        uses: actions/checkout@v4
+        with:
+          # Use the user's PAT so subsequent git push from the agent works
+          # even when it modifies workflow files or workflow-adjacent paths.
+          token: ${{ github.event.client_payload.user_pat }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install agent dependencies
+        working-directory: agent
+        run: |
+          npm install --no-audit --no-fund
+
+      - name: Classify browser need
+        id: classify
+        env:
+          TASK_PROMPT: ${{ github.event.client_payload.task_prompt }}
+        run: |
+          # Simple bash-side classifier so we know whether to install Chromium.
+          # The agent has its OWN check too — this one just decides install-time.
+          shopt -s nocasematch
+          if [[ "$TASK_PROMPT" =~ (browser|scrape|crawl|screenshot|puppeteer|playwright|headless|open[[:space:]]the[[:space:]](page|site|url)|render[[:space:]](this|the)[[:space:]]page) ]]; then
+            echo "need_browser=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "need_browser=false" >> "$GITHUB_OUTPUT"
+          fi
+          # Puter.js host page needs Chromium too. Since our default LLM path
+          # goes through Puter via a hidden headless page, we always need at
+          # least a base Chromium install. Playwright's own browsers cover it.
+          echo "need_browser=true" >> "$GITHUB_OUTPUT"
+
+      - name: Install Playwright + Chromium
+        if: steps.classify.outputs.need_browser == 'true'
+        working-directory: agent
+        run: |
+          npx playwright install --with-deps chromium
+
+      - name: Run agent
+        working-directory: agent
+        env:
+          FORGE_PAYLOAD: ${{ toJson(github.event.client_payload) }}
+        run: |
+          node run.js
+
+      - name: Ensure final state is pushed
+        if: always()
+        env:
+          USER_PAT: ${{ github.event.client_payload.user_pat }}
+        run: |
+          set +e
+          git config user.email "forge-agent@users.noreply.github.com"
+          git config user.name  "forge-agent"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "forge: final state (workflow tail)"
+            for i in 1 2 3; do
+              git push origin HEAD && break
+              git pull --rebase origin HEAD
+              sleep 2
+            done
+          fi
