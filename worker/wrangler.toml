@@ -1,31 +1,25 @@
-# Cloudflare Worker configuration for Forge.
-#
-# This Worker is a THIN RELAY only:
-#   - It receives tasks from the frontend and fires GitHub repository_dispatch
-#   - It receives progress POSTs from the running GitHub Actions job and forwards
-#     them to the connected frontend client via Server-Sent Events (SSE)
-#   - It proxies file uploads / deletes to the GitHub REST API
-#
-# The Worker holds NO persistent state.
-# There is intentionally no KV, no D1, no Durable Objects binding here.
-# If the Worker restarts mid-request, nothing is lost — GitHub is the only durable store.
+# Forge merged Cloudflare Worker.
+# Serves the static frontend and handles the relay API endpoints.
 
-name = "forge-worker"
+name = "forge"
 main = "index.js"
-compatibility_date = "2025-01-15"
+compatibility_date = "2026-08-15"
 compatibility_flags = ["nodejs_compat"]
 
-# Secrets are set with `wrangler secret put <NAME>` (or via the deploy workflow).
-# Do NOT put actual secret values in this file.
+[assets]
+directory = "../frontend"
+binding = "ASSETS"
+
+# Secrets are set with `wrangler secret put <NAME>` (or by the deploy workflow).
+# Do not put actual secret values in this file.
 #
-# Required secrets (see SETUP.md):
-#   FORGE_DISPATCH_PAT     — GitHub PAT the Worker uses to fire repository_dispatch
-#                            (fine-grained, scoped to the forge-sessions repo, with
-#                             Contents: read/write, Metadata: read, Actions: read/write)
-#   FORGE_CALLBACK_SECRET  — shared secret the Actions job includes when POSTing
-#                            progress back to /progress, so random callers can't spam it
-#   FORGE_SESSIONS_REPO    — "owner/repo" of the sessions repo (e.g. "victor/forge-sessions")
+# Required secrets:
+#   FORGE_DISPATCH_PAT     — GitHub PAT used to fire repository_dispatch
+#   FORGE_CALLBACK_SECRET  — shared secret used by Actions for /progress
+#   FORGE_SESSIONS_REPO    — owner/repo of the sessions repository
 
 [vars]
-# Non-secret defaults. Override via `wrangler.toml` env sections or dashboard if needed.
 FORGE_DISPATCH_EVENT_TYPE = "forge-task"
+
+# Wrangler resolves the asset directory relative to this configuration file.
+# The frontend is a plain static site and has no build step.
