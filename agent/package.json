@@ -8,6 +8,7 @@
     "start": "node run.js"
   },
   "dependencies": {
+    "@heyputer/puter.js": "^2.6.1",
     "playwright": "^1.48.0"
   }
 }
