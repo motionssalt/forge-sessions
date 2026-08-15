@@ -250,6 +250,22 @@ async function main() {
   } finally {
     clearInterval(heartbeatTimer);
   }
+
+  // FIX (2026-08-15): puter.js's init() opens a WebSocket per account (via
+  // its bundled undici) that stays connected for the lifetime of the client
+  // and holds the Node event loop open even after main() finishes all its
+  // awaited work. In GitHub Actions that manifests as: the agent prints its
+  // final "commitStateBatched: done" log line, main() returns, but the
+  // `node run.js` process never exits — the workflow step then sits idle
+  // until the job's 45-minute timeout (or, as in the observed runs, until
+  // the concurrency group cancels it on the next dispatch), and the
+  // subsequent "Ensure final state is pushed" step never runs.
+  //
+  // We explicitly exit(0) here so a successful run terminates cleanly
+  // regardless of any lingering sockets/timers held by puter.js internals.
+  // Anything critical (state commit + progress callback) has already been
+  // awaited above, so an immediate exit is safe.
+  process.exit(0);
 }
 
 // -----------------------------------------------------------------------------
