@@ -36,7 +36,7 @@ import { readFileTool, writeFileTool, editFileTool } from "./tools/files.js";
 import { gitCommitPush } from "./tools/git.js";
 import { browserAction } from "./tools/browser.js";
 import { uploadOutputFile } from "./tools/upload_output.js";
-import { PuterClient } from "./tools/puter_client.js";
+import { createPuterPool } from "./puter-pool.js";
 import { postProgress, appendLog, writeStatus, commitStateBatched } from "./tools/state.js";
 
 // -----------------------------------------------------------------------------
@@ -255,9 +255,8 @@ async function main() {
   } catch {}
 
   const wantBrowser = needsBrowser(task_prompt);
-  const puter = new PuterClient({ model: model || "claude-sonnet-5" });
-  await puter.init();
-  await postProgress(ctx, { type: "step", message: `Puter client ready (model=${model || "claude-sonnet-5"})` });
+  const puterPool = createPuterPool();
+  await postProgress(ctx, { type: "step", message: `Puter account pool ready (${puterPool.size} account${puterPool.size === 1 ? "" : "s"}, model=${model || "claude-sonnet-5"})` });
 
   const systemPrompt = [
     "You are Forge, an autonomous coding + research agent operating inside a GitHub Actions job.",
@@ -282,7 +281,33 @@ async function main() {
     step++;
     ctx.commitBatch.stepsSinceCommit++;
 
-    const resp = await puter.chat({ messages, tools: TOOL_SCHEMA });
+    // Retry this same logical model request across each account that is
+    // currently available. Account failures may be benched by the pool;
+    // transient errors remain eligible for later requests.
+    let resp = null;
+    let activeAccount = null;
+    const attemptedAccounts = new Set();
+    let lastError = null;
+    while (attemptedAccounts.size < puterPool.size) {
+      activeAccount = await puterPool.getActiveClient({ exclude: attemptedAccounts });
+      attemptedAccounts.add(activeAccount.index);
+      try {
+        resp = await activeAccount.client.ai.chat(messages, {
+          model: model || "claude-sonnet-5",
+          tools: TOOL_SCHEMA,
+        });
+        puterPool.reportSuccess(activeAccount.index);
+        ctx.currentPuterAccount = activeAccount.number;
+        await appendLog(ctx, `\n**Puter account:** #${activeAccount.number}\n`);
+        break;
+      } catch (err) {
+        lastError = err;
+        puterPool.reportFailure(activeAccount.index, err);
+      }
+    }
+    if (!resp) {
+      throw new Error(`All Puter accounts failed for this model request: ${lastError?.message || lastError || "unknown error"}`);
+    }
 
     // Puter returns an assistant message with optional tool_calls.
     const assistantMsg = resp.message || resp;
@@ -311,7 +336,7 @@ async function main() {
         tool: name,
         args_preview: previewArgs(args),
       });
-      await appendLog(ctx, `\n## Step ${step}: \`${name}\`\n\n\`\`\`json\n${JSON.stringify(args, null, 2).slice(0, 1500)}\n\`\`\`\n`);
+      await appendLog(ctx, `\n## Step ${step}: \`${name}\` (using Puter account #${ctx.currentPuterAccount})\n\n\`\`\`json\n${JSON.stringify(args, null, 2).slice(0, 1500)}\n\`\`\`\n`);
 
       let result;
       try {
