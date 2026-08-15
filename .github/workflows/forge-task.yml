@@ -78,6 +78,12 @@ jobs:
         working-directory: agent
         env:
           FORGE_PAYLOAD: ${{ toJson(github.event.client_payload) }}
+          PUTER_TOKEN_1: ${{ secrets.PUTER_TOKEN_1 }}
+          PUTER_TOKEN_2: ${{ secrets.PUTER_TOKEN_2 }}
+          PUTER_TOKEN_3: ${{ secrets.PUTER_TOKEN_3 }}
+          PUTER_TOKEN_4: ${{ secrets.PUTER_TOKEN_4 }}
+          PUTER_TOKEN_5: ${{ secrets.PUTER_TOKEN_5 }}
+          # Add more PUTER_TOKEN_<N> lines here when adding more accounts.
         run: |
           node run.js
 
