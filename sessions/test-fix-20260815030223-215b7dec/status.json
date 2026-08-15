@@ -1,0 +1,9 @@
+{
+  "session_id": "test-fix-20260815030223-215b7dec",
+  "task_prompt": "Say hello in one short sentence and stop.",
+  "model": "claude-sonnet-5",
+  "status": "done",
+  "current_step": 1,
+  "finished_at": "2026-08-15T03:03:15.750Z",
+  "final_message": "Hello!"
+}
