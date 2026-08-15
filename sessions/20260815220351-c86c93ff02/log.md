@@ -86,3 +86,80 @@ $ cp /home/runner/work/forge-sessions/forge-sessions/sessions/20260815220351-c86
 ```
 wrote /home/runner/work/forge-sessions/forge-sessions/sessions/20260815220351-c86c93ff02/view_image.html (520 chars)
 ```
+
+**Puter account:** #1
+
+## Step 5: `browser_action` (using Puter account #1)
+
+```json
+{
+  "action": "goto",
+  "url": "file:///home/runner/work/forge-sessions/forge-sessions/sessions/20260815220351-c86c93ff02/view_image.html"
+}
+```
+
+**Result:** error
+
+```
+browser was not provisioned for this task (classifier said no); rerun with an explicit browser cue in your prompt
+```
+
+**Puter account:** #1
+
+## Step 6: `run_shell` (using Puter account #1)
+
+```json
+{
+  "command": "file /home/runner/work/forge-sessions/forge-sessions/sessions/20260815220351-c86c93ff02/inbox/07f52788174c4458c3c51a2b658b71ed.jpg"
+}
+```
+
+**Result:** ok
+
+```
+shell exit=0
+$ file /home/runner/work/forge-sessions/forge-sessions/sessions/20260815220351-c86c93ff02/inbox/07f52788174c4458c3c51a2b658b71ed.jpg
+/home/runner/work/forge-sessions/forge-sessions/sessions/20260815220351-c86c93ff02/inbox/07f52788174c4458c3c51a2b658b71ed.jpg: JPEG image data, JFIF standard 1.01, resolution (DPI), density 72x72, segment length 16, progressive, precision 8, 736x1096, components 3
+
+
+```
+
+**Puter account:** #1
+
+## Step 7: `run_shell` (using Puter account #1)
+
+```json
+{
+  "command": "identify -verbose /home/runner/work/forge-sessions/forge-sessions/sessions/20260815220351-c86c93ff02/inbox/07f52788174c4458c3c51a2b658b71ed.jpg | head -30"
+}
+```
+
+**Result:** ok
+
+```
+shell exit=0
+$ identify -verbose /home/runner/work/forge-sessions/forge-sessions/sessions/20260815220351-c86c93ff02/inbox/07f52788174c4458c3c51a2b658b71ed.jpg | head -30
+
+bash: line 1: identify: command not found
+
+```
+
+**Puter account:** #1
+
+## Step 8: `run_shell` (using Puter account #1)
+
+```json
+{
+  "command": "exiftool /home/runner/work/forge-sessions/forge-sessions/sessions/20260815220351-c86c93ff02/inbox/07f52788174c4458c3c51a2b658b71ed.jpg 2>/dev/null || echo \"exiftool not available\""
+}
+```
+
+**Result:** ok
+
+```
+shell exit=0
+$ exiftool /home/runner/work/forge-sessions/forge-sessions/sessions/20260815220351-c86c93ff02/inbox/07f52788174c4458c3c51a2b658b71ed.jpg 2>/dev/null || echo "exiftool not available"
+exiftool not available
+
+
+```
