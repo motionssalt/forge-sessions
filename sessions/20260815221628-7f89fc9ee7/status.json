@@ -1,0 +1,8 @@
+{
+  "session_id": "20260815221628-7f89fc9ee7",
+  "task_prompt": "What's this file",
+  "model": "claude-sonnet-5",
+  "status": "running",
+  "current_step": 0,
+  "started_at": "2026-08-15T22:17:23.831Z"
+}
