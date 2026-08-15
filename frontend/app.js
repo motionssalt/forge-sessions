@@ -53,6 +53,10 @@ const els = {
   uploadDrop: $("upload-drop"),
   pendingList:$("pending-files"),
   settingsBtn:$("settings-btn"),
+  sidebar:    $("sidebar"),
+  sidebarOpen:$("sidebar-open"),
+  sidebarClose:$("sidebar-close"),
+  sidebarBackdrop:$("sidebar-backdrop"),
   modal:      $("settings-modal"),
   cfgWorker:  $("cfg-worker-url"),
   cfgRepo:    $("cfg-sessions-repo"),
@@ -208,7 +212,7 @@ async function loadSessionsList() {
       del.onclick = async (e) => { e.stopPropagation(); await deleteSession(d.name); };
       li.appendChild(name);
       li.appendChild(del);
-      li.onclick = () => openSession(d.name);
+      li.onclick = () => { openSession(d.name); closeSidebar(); };
       if (state.sessionId === d.name) li.classList.add("active");
       els.sessionList.appendChild(li);
     }
@@ -458,6 +462,20 @@ async function ingestFiles(fileList) {
 }
 
 // ---------- Settings modal ----------------------------------------------
+// ---------- Mobile sidebar drawer -----------------------------------------
+// Below the 860px CSS breakpoint #sidebar becomes a fixed off-canvas panel;
+// these just toggle the `.open` class (and the backdrop) that the media
+// query in styles.css keys off of. No-ops above the breakpoint since the
+// sidebar is a normal grid column there and CSS ignores `.open`.
+function openSidebar() {
+  els.sidebar.classList.add("open");
+  els.sidebarBackdrop.classList.remove("hidden");
+}
+function closeSidebar() {
+  els.sidebar.classList.remove("open");
+  els.sidebarBackdrop.classList.add("hidden");
+}
+
 function openSettings() {
   els.cfgWorker.value    = state.workerUrl;
   els.cfgRepo.value      = state.sessionsRepo;
@@ -484,7 +502,7 @@ function saveSettings() {
 
 // ---------- Boot ---------------------------------------------------------
 function wireEvents() {
-  els.newSession.onclick = () => newSession();
+  els.newSession.onclick = () => { newSession(); closeSidebar(); };
   els.refreshBtn.onclick = () => loadSessionsList();
   els.sendBtn.onclick = () => sendTask();
   els.promptBox.addEventListener("keydown", (e) => {
@@ -510,6 +528,10 @@ function wireEvents() {
     e.preventDefault();
     if (e.dataTransfer?.files?.length) ingestFiles(e.dataTransfer.files);
   });
+
+  els.sidebarOpen.onclick = openSidebar;
+  els.sidebarClose.onclick = closeSidebar;
+  els.sidebarBackdrop.onclick = closeSidebar;
 }
 
 async function boot() {
