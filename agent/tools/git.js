@@ -12,6 +12,12 @@
  * We never log it, never bake it into a remote URL that gets written to
  * .git/config with -v, and we prefer the credential.helper=store scratch
  * pattern with an ephemeral netrc.
+ *
+ * FIX (2026-08-15): the spawn() wrapper below used to have no timeout —
+ * a hung `git push` (bad credentials prompting interactively, network
+ * stall, huge clone) could block this tool call, and therefore the whole
+ * agent loop, forever. Every subprocess is now bounded and killed if it
+ * runs too long, so this tool always resolves.
  */
 
 import { spawn } from "node:child_process";
@@ -19,14 +25,36 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 
+// Git operations against small text files should be fast. Clone is the
+// slowest step we do here, so give it more room than commit/push.
+const GIT_TIMEOUT_MS = 30_000;
+const CLONE_TIMEOUT_MS = 60_000;
+
 function sh(cmd, args, opts = {}) {
+  const timeoutMs = opts.timeoutMs || GIT_TIMEOUT_MS;
   return new Promise((resolve) => {
     const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], ...opts });
     let out = "", err = "";
+    let killed = false;
+    const timer = setTimeout(() => {
+      killed = true;
+      try { child.kill("SIGKILL"); } catch {}
+    }, timeoutMs);
     child.stdout.on("data", d => out += d.toString());
     child.stderr.on("data", d => err += d.toString());
-    child.on("close", code => resolve({ code, stdout: out, stderr: err }));
-    child.on("error", e => resolve({ code: 1, stdout: out, stderr: err + "\n" + e.message }));
+    child.on("close", code => {
+      clearTimeout(timer);
+      resolve({
+        code: killed ? 124 : code,
+        stdout: out,
+        stderr: killed ? `${err}\n[timed out after ${timeoutMs}ms, process killed]` : err,
+        killed_by_timeout: killed,
+      });
+    });
+    child.on("error", e => {
+      clearTimeout(timer);
+      resolve({ code: 1, stdout: out, stderr: err + "\n" + e.message });
+    });
   });
 }
 
@@ -76,7 +104,7 @@ export async function gitCommitPush(args, ctx) {
   };
 
   const cloneUrl = `https://x-access-token@github.com/${ctx.target_repo}.git`;
-  const cloneRes = await sh("git", ["clone", "--depth", "1", cloneUrl, path.join(scratch, "repo")], { env: gitEnv });
+  const cloneRes = await sh("git", ["clone", "--depth", "1", cloneUrl, path.join(scratch, "repo")], { env: gitEnv, timeoutMs: CLONE_TIMEOUT_MS });
   if (cloneRes.code !== 0) return { ok: false, error: `clone failed: ${cloneRes.stderr.replace(pat, "***")}` };
 
   const repoDir = path.join(scratch, "repo");
