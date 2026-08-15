@@ -212,6 +212,17 @@ async function main() {
     callback_url, callback_secret,
   } = payload;
 
+  // Heartbeat: prints every 15s for the life of the process so a stall
+  // anywhere (including inside a library call we don't control, like
+  // @heyputer/puter.js's XHR-based ai.chat()) is visible in the Actions log
+  // as "process is alive but not progressing" rather than total silence.
+  // Diagnostic only — does not affect control flow.
+  let step = 0;
+  const heartbeatTimer = setInterval(() => {
+    console.log(`[forge/agent] heartbeat: still running, step=${step}`);
+  }, 15_000);
+  heartbeatTimer.unref?.();
+
   const workspaceRoot = process.env.GITHUB_WORKSPACE || process.cwd();
   const sessionDir = path.join(workspaceRoot, "sessions", session_id);
   const inboxDir = path.join(sessionDir, "inbox");
@@ -273,7 +284,6 @@ async function main() {
     { role: "user", content: task_prompt },
   ];
 
-  let step = 0;
   const maxSteps = 40;
   let finalMessage = null;
 
@@ -409,6 +419,7 @@ async function main() {
   });
 
   // Exit non-zero on error so the Actions run is flagged red.
+  clearInterval(heartbeatTimer);
   if (status === "error") process.exit(2);
 }
 
