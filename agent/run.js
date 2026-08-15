@@ -280,10 +280,12 @@ async function main() {
   while (step < maxSteps) {
     step++;
     ctx.commitBatch.stepsSinceCommit++;
+    console.log(`[forge/agent] step ${step}: requesting model response...`);
 
     // Retry this same logical model request across each account that is
     // currently available. Account failures may be benched by the pool;
-    // transient errors remain eligible for later requests.
+    // transient errors (including a chat() timeout — see puter-pool.js)
+    // remain eligible for later requests.
     let resp = null;
     let activeAccount = null;
     const attemptedAccounts = new Set();
@@ -302,12 +304,19 @@ async function main() {
         break;
       } catch (err) {
         lastError = err;
+        console.warn(`[forge/agent] step ${step}: account #${activeAccount.number} failed: ${err.message}`);
         puterPool.reportFailure(activeAccount.index, err);
       }
     }
     if (!resp) {
-      throw new Error(`All Puter accounts failed for this model request: ${lastError?.message || lastError || "unknown error"}`);
+      // Every account either errored or timed out on this request. Fail the
+      // step loudly (and non-zero exit at the end) rather than hanging —
+      // this is the terminal case the timeout fix guarantees we reach.
+      const reason = `All Puter accounts failed for this model request: ${lastError?.message || lastError || "unknown error"}`;
+      console.error(`[forge/agent] step ${step}: ${reason}`);
+      throw new Error(reason);
     }
+    console.log(`[forge/agent] step ${step}: got model response from account #${ctx.currentPuterAccount}`);
 
     // Puter returns an assistant message with optional tool_calls.
     const assistantMsg = resp.message || resp;
