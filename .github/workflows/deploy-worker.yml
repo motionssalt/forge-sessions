@@ -38,7 +38,12 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN:  ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx wrangler deploy
+        # --keep-vars: carry dashboard-set variables/secrets into the new
+        # deployment. Without it, a deploy can revert bindings that were set
+        # in the dashboard (or by a previous `wrangler secret put`), leaving
+        # the serving Worker without FORGE_* secrets even though the
+        # dashboard still lists them (workers-sdk #8871 / #4453).
+        run: npx wrangler deploy --keep-vars
 
       - name: Seed Worker secrets (idempotent)
         working-directory: worker
@@ -51,6 +56,18 @@ jobs:
         run: |
           # `wrangler secret put` reads the value from stdin. The values are
           # already GitHub-Actions-masked secrets.
-          if [ -n "$FORGE_DISPATCH_PAT" ];    then echo -n "$FORGE_DISPATCH_PAT"    | npx wrangler secret put FORGE_DISPATCH_PAT;    fi
-          if [ -n "$FORGE_CALLBACK_SECRET" ]; then echo -n "$FORGE_CALLBACK_SECRET" | npx wrangler secret put FORGE_CALLBACK_SECRET; fi
-          if [ -n "$FORGE_SESSIONS_REPO" ];   then echo -n "$FORGE_SESSIONS_REPO"   | npx wrangler secret put FORGE_SESSIONS_REPO;   fi
+          # NOTE: warn loudly instead of silently skipping when a repo secret
+          # is unset — a silent skip here is what leaves the deployed Worker
+          # without its FORGE_* bindings and produces the runtime 500
+          # "Worker is missing required secrets" on /task.
+          seed() {
+            local name="$1" value="$2"
+            if [ -n "$value" ]; then
+              echo -n "$value" | npx wrangler secret put "$name"
+            else
+              echo "::warning::GitHub repo secret $name is not set — skipping seed. If you manage this secret only via the Cloudflare dashboard this is expected; otherwise the Worker will 500 on /task."
+            fi
+          }
+          seed FORGE_DISPATCH_PAT    "$FORGE_DISPATCH_PAT"
+          seed FORGE_CALLBACK_SECRET "$FORGE_CALLBACK_SECRET"
+          seed FORGE_SESSIONS_REPO   "$FORGE_SESSIONS_REPO"
