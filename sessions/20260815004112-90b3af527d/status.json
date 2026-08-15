@@ -1,9 +1,0 @@
-{
-  "session_id": "20260815004112-90b3af527d",
-  "task_prompt": "What's this?",
-  "model": "claude-sonnet-5",
-  "status": "done",
-  "current_step": 1,
-  "finished_at": "2026-08-15T03:25:49.596Z",
-  "final_message": "(no message)"
-}
