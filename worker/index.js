@@ -145,8 +145,17 @@ async function handleTask(request, env) {
   const callbackSecret = env.FORGE_CALLBACK_SECRET;
   const eventType = env.FORGE_DISPATCH_EVENT_TYPE || "forge-task";
 
-  if (!dispatchPat || !sessionsRepo || !callbackSecret) {
-    return bad(500, "Worker is missing required secrets (FORGE_DISPATCH_PAT / FORGE_SESSIONS_REPO / FORGE_CALLBACK_SECRET)");
+  // Check each required secret individually so the error names exactly which
+  // one(s) are missing — a combined message makes binding/deploy desyncs
+  // (dashboard lists a secret, serving deployment lacks it) slow to diagnose.
+  const missingSecrets = [
+    ["FORGE_DISPATCH_PAT", dispatchPat],
+    ["FORGE_SESSIONS_REPO", sessionsRepo],
+    ["FORGE_CALLBACK_SECRET", callbackSecret],
+  ].filter(([, value]) => !value).map(([name]) => name);
+
+  if (missingSecrets.length > 0) {
+    return bad(500, `Worker is missing required secrets: ${missingSecrets.join(", ")}`);
   }
 
   // Build a callback URL back to THIS worker. request.url already has the correct host.
