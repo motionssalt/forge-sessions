@@ -76,10 +76,27 @@ export async function gitCommitPush(args, ctx) {
     if (diff.code === 0) return { ok: true, summary: "nothing to commit" };
     const commit = await sh("git", ["commit", "-m", message], { cwd });
     if (commit.code !== 0) return { ok: false, error: `git commit failed: ${commit.stderr}` };
-    const push = await sh("git", ["push", "origin", "HEAD"], { cwd });
+
+    const branchRes = await sh("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd });
+    const branchName = (branchRes.stdout || "").trim() || "main";
+
+    const push = await sh("git", ["push", "origin", `HEAD:refs/heads/${branchName}`], { cwd });
     if (push.code !== 0) {
-      await sh("git", ["pull", "--rebase", "origin", "HEAD"], { cwd });
-      const push2 = await sh("git", ["push", "origin", "HEAD"], { cwd });
+      // FIX (2026-08-15): same bug as tools/state.js — the previous retry
+      // ran `git pull --rebase origin HEAD` without checking its result,
+      // which could leave the repo mid-rebase before the second push. Now
+      // we fetch + rebase against an explicit branch, verify it succeeded,
+      // and abort cleanly on conflict.
+      const fetchRes = await sh("git", ["fetch", "origin", branchName], { cwd });
+      if (fetchRes.code !== 0) return { ok: false, error: `git fetch failed: ${fetchRes.stderr}` };
+
+      const rebaseRes = await sh("git", ["rebase", `origin/${branchName}`], { cwd });
+      if (rebaseRes.code !== 0) {
+        await sh("git", ["rebase", "--abort"], { cwd });
+        return { ok: false, error: `git rebase failed: ${rebaseRes.stderr}` };
+      }
+
+      const push2 = await sh("git", ["push", "origin", `HEAD:refs/heads/${branchName}`], { cwd });
       if (push2.code !== 0) return { ok: false, error: `git push failed: ${push2.stderr}` };
     }
     return { ok: true, summary: `committed to sessions repo: ${message}` };
