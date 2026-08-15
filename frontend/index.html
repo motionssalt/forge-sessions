@@ -8,6 +8,7 @@
 </head>
 <body>
   <div id="app">
+    <div id="sidebar-backdrop" class="sidebar-backdrop hidden"></div>
     <aside id="sidebar">
       <div class="brand">
         <div class="brand-mark">◆</div>
@@ -15,6 +16,7 @@
           <div class="brand-title">FORGE</div>
           <div class="brand-sub">MOTIONSALT</div>
         </div>
+        <button id="sidebar-close" class="btn ghost small sidebar-close" title="Close" aria-label="Close sessions panel">✕</button>
       </div>
 
       <button id="new-session-btn" class="btn primary">+ New session</button>
@@ -33,8 +35,11 @@
     <main id="main">
       <header id="topbar">
         <div class="topbar-left">
-          <div id="session-title">No session</div>
-          <div id="session-id" class="mono muted small"></div>
+          <button id="sidebar-open" class="btn ghost small sidebar-open" title="Sessions" aria-label="Open sessions panel">☰</button>
+          <div class="topbar-left-text">
+            <div id="session-title">No session</div>
+            <div id="session-id" class="mono muted small"></div>
+          </div>
         </div>
         <div class="topbar-right">
           <label class="model-picker">
