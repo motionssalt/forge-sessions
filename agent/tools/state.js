@@ -153,17 +153,45 @@ export async function commitStateBatched(ctx, opts = {}) {
     return { skipped: false, ok: false, error: commit.stderr };
   }
 
-  const push = await sh("git", ["push", "origin", "HEAD"], { cwd });
+  const currentBranch = await sh("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd });
+  const initialBranch = (currentBranch.stdout || "").trim() || "main";
+
+  const push = await sh("git", ["push", "origin", `HEAD:refs/heads/${initialBranch}`], { cwd });
   if (push.code !== 0) {
     console.warn("[forge/agent] push failed:", push.stderr);
-    // Try a rebase-pull-then-push once (in case the human deleted a session
-    // in parallel).
-    await sh("git", ["pull", "--rebase", "origin", "HEAD"], { cwd });
-    const push2 = await sh("git", ["push", "origin", "HEAD"], { cwd });
+    // Retry once: fetch + rebase onto the current remote branch, then push
+    // again. FIX (2026-08-15): the previous version ran
+    // `git pull --rebase origin HEAD` and pushed again WITHOUT checking
+    // whether the rebase actually succeeded. `origin HEAD` is not a branch
+    // name — rebasing against it can leave the repo mid-rebase or in a
+    // state where `HEAD` no longer resolves the way `git push origin HEAD`
+    // expects, which produced the exact "not a full refname" error seen in
+    // production. We now rebase against an explicit branch, check its exit
+    // code, and abort cleanly on conflict instead of pushing from unknown
+    // repo state.
+    const branchName = initialBranch;
+    console.warn(`[forge/agent] retrying: fetch + rebase onto origin/${branchName}`);
+
+    const fetch = await sh("git", ["fetch", "origin", branchName], { cwd });
+    if (fetch.code !== 0) {
+      console.warn("[forge/agent] fetch failed:", fetch.stderr);
+      return { skipped: false, ok: false, error: `fetch failed: ${fetch.stderr}` };
+    }
+
+    const rebase = await sh("git", ["rebase", `origin/${branchName}`], { cwd });
+    if (rebase.code !== 0) {
+      console.warn("[forge/agent] rebase failed, aborting:", rebase.stderr);
+      // Leave the repo clean rather than mid-rebase for the next run.
+      await sh("git", ["rebase", "--abort"], { cwd });
+      return { skipped: false, ok: false, error: `rebase failed: ${rebase.stderr}` };
+    }
+
+    const push2 = await sh("git", ["push", "origin", `HEAD:refs/heads/${branchName}`], { cwd });
     if (push2.code !== 0) {
       console.warn("[forge/agent] push retry failed:", push2.stderr);
       return { skipped: false, ok: false, error: push2.stderr };
     }
+    console.log("[forge/agent] push retry succeeded");
   }
 
   b.stepsSinceCommit = 0;
