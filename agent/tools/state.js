@@ -7,11 +7,23 @@
  * - writeStatus: overwrite sessions/<id>/status.json.
  * - commitStateBatched: git add/commit/push the state files, but only if
  *   enough steps or wall-clock time has elapsed since the last commit.
+ *
+ * FIX (2026-08-15): every network/subprocess call in this file used to be
+ * unbounded — a slow/unreachable Worker or a stuck `git push` would hang
+ * the whole GitHub Actions job forever with zero console output, since
+ * success was silent and failures only logged if the promise ever settled.
+ * Every blocking call below now has an explicit ceiling and always logs
+ * on entry/exit so a hang is visible in the Actions log instead of silent.
  */
 
 import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
+
+// Hard ceiling for the progress-callback POST to the Cloudflare Worker.
+const PROGRESS_TIMEOUT_MS = 10_000;
+// Hard ceiling for any single git subprocess used for state commits.
+const GIT_TIMEOUT_MS = 30_000;
 
 function statusJsonPath(ctx) { return path.join(ctx.sessionDir, "status.json"); }
 function logMdPath(ctx)      { return path.join(ctx.sessionDir, "log.md"); }
@@ -20,7 +32,9 @@ export async function postProgress(ctx, payload) {
   if (!ctx.callback_url) return;
   const body = { session_id: ctx.session_id, ts: new Date().toISOString(), ...payload };
   try {
-    // Node 20+ has global fetch.
+    // Node 20+ has global fetch. AbortSignal.timeout() is the fix here:
+    // without it, an unresponsive Worker (cold start, network stall, dead
+    // deploy) hangs this await forever with no log output at all.
     await fetch(ctx.callback_url, {
       method: "POST",
       headers: {
@@ -28,10 +42,16 @@ export async function postProgress(ctx, payload) {
         "X-Forge-Callback-Secret": ctx.callback_secret || "",
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(PROGRESS_TIMEOUT_MS),
     });
   } catch (err) {
     // Deliberately swallow. The agent must not die because the Worker is down.
-    console.warn("[forge/agent] postProgress failed:", err.message);
+    // This now ALWAYS fires within PROGRESS_TIMEOUT_MS instead of possibly
+    // never firing.
+    const reason = err?.name === "TimeoutError" || err?.name === "AbortError"
+      ? `timed out after ${PROGRESS_TIMEOUT_MS}ms`
+      : err.message;
+    console.warn("[forge/agent] postProgress failed:", reason);
   }
 }
 
@@ -53,14 +73,34 @@ export async function writeStatus(ctx, status) {
   }
 }
 
+// Bounded subprocess runner. Previously had no timeout at all — a stuck
+// `git push` (auth prompt, network stall, huge diff) would hang the job
+// forever. Now it is SIGKILLed after GIT_TIMEOUT_MS and returns a non-zero
+// code so callers can see and report the failure instead of hanging.
 function sh(cmd, args, opts = {}) {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], ...opts });
     let out = "", err = "";
+    let killed = false;
+    const timer = setTimeout(() => {
+      killed = true;
+      try { child.kill("SIGKILL"); } catch {}
+    }, GIT_TIMEOUT_MS);
     child.stdout.on("data", d => out += d.toString());
     child.stderr.on("data", d => err += d.toString());
-    child.on("close", code => resolve({ code, stdout: out, stderr: err }));
-    child.on("error", e => resolve({ code: 1, stdout: out, stderr: err + "\n" + e.message }));
+    child.on("close", code => {
+      clearTimeout(timer);
+      resolve({
+        code: killed ? 124 : code,
+        stdout: out,
+        stderr: killed ? `${err}\n[timed out after ${GIT_TIMEOUT_MS}ms, process killed]` : err,
+        killed_by_timeout: killed,
+      });
+    });
+    child.on("error", e => {
+      clearTimeout(timer);
+      resolve({ code: 1, stdout: out, stderr: err + "\n" + e.message });
+    });
   });
 }
 
@@ -81,6 +121,8 @@ export async function commitStateBatched(ctx, opts = {}) {
   const stepDue = b.stepsSinceCommit >= b.maxSteps;
   if (!opts.force && !timeDue && !stepDue) return { skipped: true };
 
+  console.log(`[forge/agent] commitStateBatched: starting (force=${!!opts.force}, step=${opts.step})`);
+
   const cwd = ctx.workspaceRoot;
   const relLog     = path.relative(cwd, logMdPath(ctx));
   const relStatus  = path.relative(cwd, statusJsonPath(ctx));
@@ -100,6 +142,7 @@ export async function commitStateBatched(ctx, opts = {}) {
     // hot-spin on a no-op.
     b.stepsSinceCommit = 0;
     b.lastCommitMs = now;
+    console.log("[forge/agent] commitStateBatched: nothing to commit");
     return { skipped: true, empty: true };
   }
 
@@ -117,10 +160,14 @@ export async function commitStateBatched(ctx, opts = {}) {
     // in parallel).
     await sh("git", ["pull", "--rebase", "origin", "HEAD"], { cwd });
     const push2 = await sh("git", ["push", "origin", "HEAD"], { cwd });
-    if (push2.code !== 0) return { skipped: false, ok: false, error: push2.stderr };
+    if (push2.code !== 0) {
+      console.warn("[forge/agent] push retry failed:", push2.stderr);
+      return { skipped: false, ok: false, error: push2.stderr };
+    }
   }
 
   b.stepsSinceCommit = 0;
   b.lastCommitMs = now;
+  console.log("[forge/agent] commitStateBatched: done");
   return { skipped: false, ok: true };
 }
