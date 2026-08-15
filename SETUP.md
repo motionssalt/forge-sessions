@@ -103,6 +103,33 @@ In the `forge-sessions` repo on GitHub, go to **Settings → Secrets and variabl
 
 `FORGE_CALLBACK_SECRET` is a shared secret between the GitHub Actions runner and the Cloudflare Worker so random people can't spam the Worker's `/progress` endpoint. Any random string works, as long as both sides use the same one.
 
+### 3a. Add Puter authentication tokens
+
+The Forge agent runs headlessly in GitHub Actions, so it needs Puter authentication tokens supplied as repository secrets. To create a token, sign in at [puter.com/dashboard#account](https://puter.com/dashboard#account), find the API token section, and click **Create token**. Repeat this process for each separate Puter.com account you want to use for fallback rotation.
+
+Add the tokens in the `forge-sessions` repository under **Settings → Secrets and variables → Actions**, alongside the other Forge secrets:
+
+| Secret | Value |
+|---|---|
+| `PUTER_TOKEN_1` | Token from the first Puter account |
+| `PUTER_TOKEN_2` | Token from the second Puter account |
+| `PUTER_TOKEN_3` | Token from the third Puter account, if used |
+| `PUTER_TOKEN_4` | Token from the fourth Puter account, if used |
+| `PUTER_TOKEN_5` | Token from the fifth Puter account, if used |
+
+The agent automatically scans for every `PUTER_TOKEN_<N>` environment variable, in numeric order, so there is no hardcoded maximum. When an account reaches a quota or authentication failure, it is temporarily benched and the same model request is retried against another account. Transient errors do not automatically remove an account from rotation.
+
+The workflow explicitly forwards token secrets to the agent. The relevant `env:` block looks like this:
+
+```yaml
+env:
+  PUTER_TOKEN_1: ${{ secrets.PUTER_TOKEN_1 }}
+  PUTER_TOKEN_2: ${{ secrets.PUTER_TOKEN_2 }}
+  # Add one line per token the user has.
+```
+
+You must add a corresponding `env:` line for **every** `PUTER_TOKEN_<N>` secret you create. GitHub Actions will not automatically forward a newly created secret: if you add `PUTER_TOKEN_6` later, add `PUTER_TOKEN_6: ${{ secrets.PUTER_TOKEN_6 }}` to `.github/workflows/forge-task.yml` as well. The workflow includes lines for `PUTER_TOKEN_1` through `PUTER_TOKEN_5` by default.
+
 ---
 
 ## 4. Set up Cloudflare
