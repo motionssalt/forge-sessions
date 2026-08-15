@@ -1,14 +1,13 @@
 {
   "name": "forge-agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Forge agent loop. Runs inside GitHub Actions on a repository_dispatch trigger.",
+  "description": "Forge agent loop. Runs inside GitHub Actions on a repository_dispatch trigger. Drives puter.js inside a real headless Chromium page for reliable tool-calling.",
   "scripts": {
     "start": "node run.js"
   },
   "dependencies": {
-    "@heyputer/puter.js": "^2.6.1",
     "playwright": "^1.48.0"
   }
 }

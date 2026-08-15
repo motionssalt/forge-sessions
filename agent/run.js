@@ -1,11 +1,17 @@
 /**
- * Forge agent loop.
+ * Forge agent loop — v2 rewrite (2026-08-15).
  *
  * Runs inside GitHub Actions (see .github/workflows/forge-task.yml).
- * See puter-pool.js for the root-cause note on the second-iteration hang
- * — this file's only responsibility around that bug is to consume the
- * *normalized* response the pool wrapper now returns, instead of trying
- * to duck-type puter.js's two return shapes itself.
+ *
+ * Design:
+ *   - The Puter driver (agent/puter.js) hosts puter.js inside a real
+ *     headless Chromium page, so tool-calling is delivered by the same
+ *     browser SDK that the puter.com playground uses. This replaces the
+ *     old Node-side NDJSON drain hack that dropped tool_calls silently.
+ *   - This loop is a plain OpenAI-style tool-calling loop: model returns
+ *     tool_calls -> we execute each -> we push a `role: "tool"` result -> we
+ *     go around again until the model calls `finish` or produces a plain
+ *     assistant reply with no tool_calls.
  */
 
 import fs from "node:fs/promises";
@@ -17,7 +23,7 @@ import { readFileTool, writeFileTool, editFileTool } from "./tools/files.js";
 import { gitCommitPush } from "./tools/git.js";
 import { browserAction } from "./tools/browser.js";
 import { uploadOutputFile } from "./tools/upload_output.js";
-import { createPuterPool } from "./puter-pool.js";
+import { createPuterPool } from "./puter.js";
 import { postProgress, appendLog, writeStatus, commitStateBatched } from "./tools/state.js";
 
 // -----------------------------------------------------------------------------
@@ -45,22 +51,6 @@ function needsBrowser(prompt) {
   return /\b(browser|scrape|crawl|screenshot|puppeteer|playwright|headless|open the (page|site|url)|render (this|the) page)\b/.test(p);
 }
 
-// Puter's streaming path sometimes hands us `content` as an array of
-// { type, text } parts even after the pool wrapper's flatten step (e.g. a
-// buffered final line from a provider that speaks parts). Belt & braces.
-function contentToText(c) {
-  if (typeof c === "string") return c;
-  if (Array.isArray(c)) {
-    let out = "";
-    for (const p of c) {
-      if (typeof p === "string") out += p;
-      else if (p && typeof p.text === "string") out += p.text;
-    }
-    return out;
-  }
-  return "";
-}
-
 // -----------------------------------------------------------------------------
 async function main() {
   const payload = readPayload();
@@ -70,16 +60,13 @@ async function main() {
     callback_url, callback_secret,
   } = payload;
 
-  // Heartbeat. NOTE: intentionally NOT `.unref()`-ed. With unref() the timer
-  // is silently allowed to stop firing when it's the only thing keeping the
-  // loop alive, which produced the "heartbeat also disappeared" symptom we
-  // used to (incorrectly) attribute to full event-loop blockage. We clear
-  // this timer explicitly at the end of main(), so keeping it referenced
-  // is safe and gives us a reliable liveness signal.
+  // Heartbeat so a hang is visible in the Actions log.
   let step = 0;
   const heartbeatTimer = setInterval(() => {
     console.log(`[forge/agent] heartbeat: still running, step=${step}`);
   }, 15_000);
+
+  let pool = null;
 
   try {
     const workspaceRoot = process.env.GITHUB_WORKSPACE || process.cwd();
@@ -98,21 +85,26 @@ async function main() {
       commitBatch: { stepsSinceCommit: 0, lastCommitMs: Date.now(), maxSteps: 4, maxMs: 30_000 },
     };
 
+    const effectiveModel = model || "claude-sonnet-5";
+
     await writeStatus(ctx, {
       session_id, task_prompt,
-      model: model || "claude-sonnet-5",
+      model: effectiveModel,
       status: "running", current_step: 0,
       started_at: new Date().toISOString(),
     });
-    await appendLog(ctx, `# Session ${session_id}\n\n**Task:** ${task_prompt}\n\n**Model:** ${model || "claude-sonnet-5"}\n\n---\n`);
+    await appendLog(ctx, `# Session ${session_id}\n\n**Task:** ${task_prompt}\n\n**Model:** ${effectiveModel}\n\n---\n`);
     await postProgress(ctx, { type: "status", status: "running", message: "Agent booted, initializing tools..." });
 
     let inboxFiles = [];
     try { inboxFiles = (await fs.readdir(inboxDir)).filter(f => !f.startsWith(".")); } catch {}
 
     const wantBrowser = needsBrowser(task_prompt);
-    const puterPool = createPuterPool();
-    await postProgress(ctx, { type: "step", message: `Puter account pool ready (${puterPool.size} account${puterPool.size === 1 ? "" : "s"}, model=${model || "claude-sonnet-5"})` });
+    pool = createPuterPool();
+    await postProgress(ctx, {
+      type: "step",
+      message: `Puter account pool ready (${pool.size} account${pool.size === 1 ? "" : "s"}, model=${effectiveModel})`
+    });
 
     const systemPrompt = [
       "You are Forge, an autonomous coding + research agent operating inside a GitHub Actions job.",
@@ -137,48 +129,22 @@ async function main() {
       ctx.commitBatch.stepsSinceCommit++;
       console.log(`[forge/agent] step ${step}: requesting model response...`);
 
-      let resp = null;
-      let activeAccount = null;
-      const attemptedAccounts = new Set();
-      let lastError = null;
-      while (attemptedAccounts.size < puterPool.size) {
-        activeAccount = await puterPool.getActiveClient({ exclude: attemptedAccounts });
-        attemptedAccounts.add(activeAccount.index);
-        try {
-          // The pool wrapper guarantees:
-          //   - if puter.js returned an NDJSON iterator, it is fully drained
-          //     and folded into a single assistant message here (so the shim
-          //     stops thrashing on unread chunks and the underlying fetch
-          //     body closes),
-          //   - resp is always shaped { message: { role, content, tool_calls? } }.
-          resp = await activeAccount.client.ai.chat(messages, {
-            model: model || "claude-sonnet-5",
-            tools: TOOL_SCHEMA,
-          });
-          puterPool.reportSuccess(activeAccount.index);
-          ctx.currentPuterAccount = activeAccount.number;
-          await appendLog(ctx, `\n**Puter account:** #${activeAccount.number}\n`);
-          break;
-        } catch (err) {
-          lastError = err;
-          console.warn(`[forge/agent] step ${step}: account #${activeAccount.number} failed: ${err.message}`);
-          puterPool.reportFailure(activeAccount.index, err);
-        }
+      let chatResult;
+      try {
+        chatResult = await pool.chat(messages, { model: effectiveModel, tools: TOOL_SCHEMA });
+      } catch (err) {
+        console.error(`[forge/agent] step ${step}: pool.chat failed:`, err.message);
+        throw err;
       }
-      if (!resp) {
-        const reason = `All Puter accounts failed for this model request: ${lastError?.message || lastError || "unknown error"}`;
-        console.error(`[forge/agent] step ${step}: ${reason}`);
-        throw new Error(reason);
-      }
-      console.log(`[forge/agent] step ${step}: got model response from account #${ctx.currentPuterAccount}`);
 
-      const assistantMsg = resp.message;
-      // Store a wire-safe copy in `messages`. We flatten content here so the
-      // next request's JSON body is always a plain string, not a parts array
-      // whose serialization varies across model providers.
+      const assistantMsg = chatResult.message || { role: "assistant", content: "" };
+      ctx.currentPuterAccount = chatResult.account?.number;
+      await appendLog(ctx, `\n**Puter account:** #${chatResult.account?.number ?? "?"}\n`);
+      console.log(`[forge/agent] step ${step}: response from account #${ctx.currentPuterAccount}, tool_calls=${assistantMsg.tool_calls?.length || 0}`);
+
       const wireAssistant = {
         role: "assistant",
-        content: contentToText(assistantMsg.content),
+        content: typeof assistantMsg.content === "string" ? assistantMsg.content : "",
         ...(assistantMsg.tool_calls?.length ? { tool_calls: assistantMsg.tool_calls } : {}),
       };
       messages.push(wireAssistant);
@@ -234,7 +200,7 @@ async function main() {
 
     await writeStatus(ctx, {
       session_id, task_prompt,
-      model: model || "claude-sonnet-5",
+      model: effectiveModel,
       status, current_step: step,
       finished_at: new Date().toISOString(),
       final_message: message,
@@ -249,22 +215,11 @@ async function main() {
     if (status === "error") process.exit(2);
   } finally {
     clearInterval(heartbeatTimer);
+    try { await pool?.close(); } catch {}
   }
 
-  // FIX (2026-08-15): puter.js's init() opens a WebSocket per account (via
-  // its bundled undici) that stays connected for the lifetime of the client
-  // and holds the Node event loop open even after main() finishes all its
-  // awaited work. In GitHub Actions that manifests as: the agent prints its
-  // final "commitStateBatched: done" log line, main() returns, but the
-  // `node run.js` process never exits — the workflow step then sits idle
-  // until the job's 45-minute timeout (or, as in the observed runs, until
-  // the concurrency group cancels it on the next dispatch), and the
-  // subsequent "Ensure final state is pushed" step never runs.
-  //
-  // We explicitly exit(0) here so a successful run terminates cleanly
-  // regardless of any lingering sockets/timers held by puter.js internals.
-  // Anything critical (state commit + progress callback) has already been
-  // awaited above, so an immediate exit is safe.
+  // Exit explicitly so any lingering Playwright/websocket state doesn't hold
+  // the event loop open. Everything critical has been awaited above.
   process.exit(0);
 }
 
