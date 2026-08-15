@@ -1,0 +1,8 @@
+{
+  "session_id": "20260815220351-c86c93ff02",
+  "task_prompt": "What's this?",
+  "model": "claude-opus-4",
+  "status": "running",
+  "current_step": 0,
+  "started_at": "2026-08-15T22:04:51.458Z"
+}
